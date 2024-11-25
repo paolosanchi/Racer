@@ -5,6 +5,7 @@
 #include "host/ble_uuid.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+#include "esp_mac.h"
 
 #define LOG_TAG_GATT_SVR "gatt_svr"
 #define REBOOT_DEEP_SLEEP_TIMEOUT 500
@@ -41,6 +42,25 @@ static const ble_uuid128_t gatt_svr_chr_ota_data_uuid =
         BLE_UUID128_INIT(0xb0, 0xa5, 0xf8, 0x45, 0x8d, 0xca, 0x89, 0x9b, 0xd8, 0x4c,
                          0x40, 0x1f, 0x88, 0x88, 0x40, 0x23);
 
+// service: UART Service
+// 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+static const ble_uuid128_t gatt_svr_svc_uart_uuid =
+        BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3,
+                         0xa3, 0xb5, 0x01, 0x00, 0x40, 0x6e);
+
+// characteristic: UART RX
+// 6e400002-b5a3-f393-e0a9-e50e24dcca9e
+static const ble_uuid128_t gatt_svr_chr_uart_rx_uuid =
+        BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3,
+                         0xa3, 0xb5, 0x02, 0x00, 0x40, 0x6e);
+
+// characteristic: UART TX
+// 6e400003-b5a3-f393-e0a9-e50e24dcca9e
+static const ble_uuid128_t gatt_svr_chr_uart_tx_uuid =
+        BLE_UUID128_INIT(0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0, 0x93, 0xf3,
+                         0xa3, 0xb5, 0x03, 0x00, 0x40, 0x6e);
 
 
 void gatt_svr_init();
+
+void gatt_svr_notify_time_to_mrc();

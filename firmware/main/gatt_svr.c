@@ -9,6 +9,7 @@ uint8_t gatt_svr_chr_ota_data_val[128];
 
 uint16_t ota_control_val_handle;
 uint16_t ota_data_val_handle;
+uint16_t ota_uart_val_handle;
 
 uint16_t num_pkgs_received = 0;
 uint16_t packet_size = 0;
@@ -33,160 +34,194 @@ static int gatt_svr_chr_access_device_info(uint16_t conn_handle,
                                            struct ble_gatt_access_ctxt *ctxt,
                                            void *arg);
 
+static int gatt_svr_chr_ota_uart_rx_cb(uint16_t conn_handle,
+                                    uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg);
+
+static int gatt_svr_chr_ota_uart_tx_cb(uint16_t conn_handle,
+                                    uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg);
+
 static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
-        {// Service: Device Information
-                .type = BLE_GATT_SVC_TYPE_PRIMARY,
-                .uuid = BLE_UUID16_DECLARE(GATT_DEVICE_INFO_UUID),
-                .characteristics =
-                (struct ble_gatt_chr_def[]) {
-                        {
-                                // Characteristic: Manufacturer Name
-                                .uuid = BLE_UUID16_DECLARE(GATT_MANUFACTURER_NAME_UUID),
-                                .access_cb = gatt_svr_chr_access_device_info,
-                                .flags = BLE_GATT_CHR_F_READ,
-                        },
-                        {
-                                // Characteristic: Model Number
-                                .uuid = BLE_UUID16_DECLARE(GATT_MODEL_NUMBER_UUID),
-                                .access_cb = gatt_svr_chr_access_device_info,
-                                .flags = BLE_GATT_CHR_F_READ,
-                        },
-                        {
-                                0,
-                        },
+    {// Service: Device Information
+     .type = BLE_GATT_SVC_TYPE_PRIMARY,
+     .uuid = BLE_UUID16_DECLARE(GATT_DEVICE_INFO_UUID),
+     .characteristics =
+         (struct ble_gatt_chr_def[]){
+             {
+                 // Characteristic: Manufacturer Name
+                 .uuid = BLE_UUID16_DECLARE(GATT_MANUFACTURER_NAME_UUID),
+                 .access_cb = gatt_svr_chr_access_device_info,
+                 .flags = BLE_GATT_CHR_F_READ,
+             },
+             {
+                 // Characteristic: Model Number
+                 .uuid = BLE_UUID16_DECLARE(GATT_MODEL_NUMBER_UUID),
+                 .access_cb = gatt_svr_chr_access_device_info,
+                 .flags = BLE_GATT_CHR_F_READ,
+             },
+             {
+                 0,
+             },
+         }},
+
+    {
+        // service: OTA Service
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &gatt_svr_svc_ota_uuid.u,
+        .characteristics =
+            (struct ble_gatt_chr_def[]){
+                {
+                    // characteristic: OTA control
+                    .uuid = &gatt_svr_chr_ota_control_uuid.u,
+                    .access_cb = gatt_svr_chr_ota_control_cb,
+                    .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
+                             BLE_GATT_CHR_F_NOTIFY,
+                    .val_handle = &ota_control_val_handle,
+                },
+                {
+                    // characteristic: OTA data
+                    .uuid = &gatt_svr_chr_ota_data_uuid.u,
+                    .access_cb = gatt_svr_chr_ota_data_cb,
+                    .flags = BLE_GATT_CHR_F_WRITE,
+                    .val_handle = &ota_data_val_handle,
+                },
+                {
+                    0,
                 }},
+    },
+    {
+        // service: UART Service
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &gatt_svr_svc_uart_uuid.u,
+        .characteristics =
+            (struct ble_gatt_chr_def[]){
+                {
+                    // characteristic: UART TX
+                    .uuid = &gatt_svr_chr_uart_tx_uuid.u,
+                    .access_cb = gatt_svr_chr_ota_uart_tx_cb,
+                    .flags = BLE_GATT_CHR_F_NOTIFY,
+                    .val_handle = &ota_uart_val_handle,
+                },
+                {
+                    // characteristic: UART RX
+                    .uuid = &gatt_svr_chr_uart_rx_uuid.u,
+                    .access_cb = gatt_svr_chr_ota_uart_rx_cb,
+                    .flags = BLE_GATT_CHR_F_WRITE,
+                },
+                {
+                    0,
+                },
+            },
+    },
 
-        {
-                // service: OTA Service
-                .type = BLE_GATT_SVC_TYPE_PRIMARY,
-                .uuid = &gatt_svr_svc_ota_uuid.u,
-                .characteristics =
-                (struct ble_gatt_chr_def[]) {
-                        {
-                                // characteristic: OTA control
-                                .uuid = &gatt_svr_chr_ota_control_uuid.u,
-                                .access_cb = gatt_svr_chr_ota_control_cb,
-                                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
-                                         BLE_GATT_CHR_F_NOTIFY,
-                                .val_handle = &ota_control_val_handle,
-                        },
-                        {
-                                // characteristic: OTA data
-                                .uuid = &gatt_svr_chr_ota_data_uuid.u,
-                                .access_cb = gatt_svr_chr_ota_data_cb,
-                                .flags = BLE_GATT_CHR_F_WRITE,
-                                .val_handle = &ota_data_val_handle,
-                        },
-                        {
-                                0,
-                        }},
-        },
-
-        {
-                0,
-        },
+    {
+        0,
+    },
 };
 
 static int gatt_svr_chr_access_device_info(uint16_t conn_handle,
                                            uint16_t attr_handle,
                                            struct ble_gatt_access_ctxt *ctxt,
                                            void *arg) {
-    uint16_t uuid;
-    int rc;
+        uint16_t uuid;
+        int rc;
 
-    uuid = ble_uuid_u16(ctxt->chr->uuid);
+        uuid = ble_uuid_u16(ctxt->chr->uuid);
 
     if (uuid == GATT_MODEL_NUMBER_UUID) {
-        rc = os_mbuf_append(ctxt->om, model_num, strlen(model_num));
-        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
+                rc = os_mbuf_append(ctxt->om, model_num, strlen(model_num));
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
 
     if (uuid == GATT_MANUFACTURER_NAME_UUID) {
-        rc = os_mbuf_append(ctxt->om, manuf_name, strlen(manuf_name));
-        return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-    }
+                rc = os_mbuf_append(ctxt->om, manuf_name, strlen(manuf_name));
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
 
-    assert(0);
-    return BLE_ATT_ERR_UNLIKELY;
+        assert(0);
+        return BLE_ATT_ERR_UNLIKELY;
 }
 
 static int gatt_svr_chr_write(struct os_mbuf *om, uint16_t min_len,
                               uint16_t max_len, void *dst, uint16_t *len) {
-    uint16_t om_len;
-    int rc;
+        uint16_t om_len;
+        int rc;
 
-    om_len = OS_MBUF_PKTLEN(om);
+        om_len = OS_MBUF_PKTLEN(om);
     if (om_len < min_len || om_len > max_len) {
-        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
-    }
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+        }
 
-    rc = ble_hs_mbuf_to_flat(om, dst, max_len, len);
+        rc = ble_hs_mbuf_to_flat(om, dst, max_len, len);
     if (rc != 0) {
-        return BLE_ATT_ERR_UNLIKELY;
-    }
+                return BLE_ATT_ERR_UNLIKELY;
+        }
 
-    return 0;
+        return 0;
 }
 
 static void update_ota_control(uint16_t conn_handle) {
-    struct os_mbuf *om;
-    esp_err_t err;
+        struct os_mbuf *om;
+        esp_err_t err;
 
-    // check which value has been received
+        // check which value has been received
     switch (gatt_svr_chr_ota_control_val) {
         case SVR_CHR_OTA_CONTROL_REQUEST:
-            // OTA request
+                // OTA request
             ESP_LOGD(LOG_TAG_GATT_SVR, "OTA has been requested via BLE.");
 
-            // is this only the initial request, or does this happen on every transaction?
+                // is this only the initial request, or does this happen on every transaction?
 
-            // this is saying back to the other device that we are good to go
-            gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_REQUEST_ACK;
+                // this is saying back to the other device that we are good to go
+                gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_REQUEST_ACK;
 
-            // this would say that we are not good to go
-//      gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_REQUEST_NAK;
+                // this would say that we are not good to go
+                //      gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_REQUEST_NAK;
 
-            // retrieve the packet size from OTA data
-            packet_size =
+                // retrieve the packet size from OTA data
+                packet_size =
                     (gatt_svr_chr_ota_data_val[1] << 8) + gatt_svr_chr_ota_data_val[0];
-            ESP_LOGI(LOG_TAG_GATT_SVR, "Packet size is: %d", packet_size);
+                ESP_LOGI(LOG_TAG_GATT_SVR, "Packet size is: %d", packet_size);
 
-            // clear the var
-            num_pkgs_received = 0;
+                // clear the var
+                num_pkgs_received = 0;
 
-            // notify the client via BLE that the OTA has been acknowledged (or not)
-            om = ble_hs_mbuf_from_flat(&gatt_svr_chr_ota_control_val,
-                                       sizeof(gatt_svr_chr_ota_control_val));
-            ble_gattc_notify_custom(conn_handle, ota_control_val_handle, om);
+                // notify the client via BLE that the OTA has been acknowledged (or not)
+                om = ble_hs_mbuf_from_flat(&gatt_svr_chr_ota_control_val,
+                                           sizeof(gatt_svr_chr_ota_control_val));
+                ble_gattc_notify_custom(conn_handle, ota_control_val_handle, om);
             ESP_LOGD(LOG_TAG_GATT_SVR, "OTA request acknowledgement has been sent.");
 
-            break;
+                break;
 
-            // this case is saying we are done with the comms and are closing the channel
+                // this case is saying we are done with the comms and are closing the channel
         case SVR_CHR_OTA_CONTROL_DONE:
 
-            // if needed, we can run checks of any kind here before telling the
-            // other device if we are ok to terminate the channel
+                // if needed, we can run checks of any kind here before telling the
+                // other device if we are ok to terminate the channel
 
-            // i.e. turn off all motors before closing connection
-            gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_DONE_ACK;
+                // i.e. turn off all motors before closing connection
+                gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_DONE_ACK;
 
-            // or
-//        gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_DONE_NAK;
+                // or
+                //        gatt_svr_chr_ota_control_val = SVR_CHR_OTA_CONTROL_DONE_NAK;
 
 
-            // notify the client via BLE that DONE has been acknowledged
-            om = ble_hs_mbuf_from_flat(&gatt_svr_chr_ota_control_val,
-                                       sizeof(gatt_svr_chr_ota_control_val));
+                // notify the client via BLE that DONE has been acknowledged
+                om = ble_hs_mbuf_from_flat(&gatt_svr_chr_ota_control_val,
+                                           sizeof(gatt_svr_chr_ota_control_val));
 
-            ble_gattc_notify_custom(conn_handle, ota_control_val_handle, om);
+                ble_gattc_notify_custom(conn_handle, ota_control_val_handle, om);
             ESP_LOGD(LOG_TAG_GATT_SVR, "OTA DONE acknowledgement has been sent.");
 
-            break;
+                break;
 
         default:
-            break;
-    }
+                break;
+        }
 
 
 }
@@ -195,33 +230,33 @@ static int gatt_svr_chr_ota_control_cb(uint16_t conn_handle,
                                        uint16_t attr_handle,
                                        struct ble_gatt_access_ctxt *ctxt,
                                        void *arg) {
-    int rc;
-    uint8_t length = sizeof(gatt_svr_chr_ota_control_val);
+        int rc;
+        uint8_t length = sizeof(gatt_svr_chr_ota_control_val);
 
     switch (ctxt->op) {
         case BLE_GATT_ACCESS_OP_READ_CHR:
-            // a client is reading the current value of ota control
-            rc = os_mbuf_append(ctxt->om, &gatt_svr_chr_ota_control_val, length);
-            return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
-            break;
+                // a client is reading the current value of ota control
+                rc = os_mbuf_append(ctxt->om, &gatt_svr_chr_ota_control_val, length);
+                return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+                break;
 
         case BLE_GATT_ACCESS_OP_WRITE_CHR:
-            // a client is writing a value to ota control
-            rc = gatt_svr_chr_write(ctxt->om, 1, length,
-                                    &gatt_svr_chr_ota_control_val, NULL);
+                // a client is writing a value to ota control
+                rc = gatt_svr_chr_write(ctxt->om, 1, length,
+                                        &gatt_svr_chr_ota_control_val, NULL);
 
-            // write the new value control:
-            update_ota_control(conn_handle);
-            return rc;
-            break;
+                // write the new value control:
+                update_ota_control(conn_handle);
+                return rc;
+                break;
 
         default:
-            break;
-    }
+                break;
+        }
 
-    // this shouldn't happen
-    assert(0);
-    return BLE_ATT_ERR_UNLIKELY;
+        // this shouldn't happen
+        assert(0);
+        return BLE_ATT_ERR_UNLIKELY;
 }
 
 
@@ -229,32 +264,104 @@ static int gatt_svr_chr_ota_control_cb(uint16_t conn_handle,
 static int gatt_svr_chr_ota_data_cb(uint16_t conn_handle, uint16_t attr_handle,
                                     struct ble_gatt_access_ctxt *ctxt,
                                     void *arg) {
-    int rc;
-    esp_err_t err;
+        int rc;
+        esp_err_t err;
 
-    // store the received data into gatt_svr_chr_ota_data_val
-    rc = gatt_svr_chr_write(ctxt->om, 1, sizeof(gatt_svr_chr_ota_data_val),
-                            gatt_svr_chr_ota_data_val, NULL);
+        // store the received data into gatt_svr_chr_ota_data_val
+        rc = gatt_svr_chr_write(ctxt->om, 1, sizeof(gatt_svr_chr_ota_data_val),
+                                gatt_svr_chr_ota_data_val, NULL);
 
-    ESP_LOGI(LOG_TAG_GATT_SVR, "Received packet data:%i, %i, %i, %i, %i", gatt_svr_chr_ota_data_val[0],
-             gatt_svr_chr_ota_data_val[1], gatt_svr_chr_ota_data_val[2], gatt_svr_chr_ota_data_val[3],
-             gatt_svr_chr_ota_data_val[4]);
+        ESP_LOGI(LOG_TAG_GATT_SVR, "Received packet data:%i, %i, %i, %i, %i", gatt_svr_chr_ota_data_val[0],
+                 gatt_svr_chr_ota_data_val[1], gatt_svr_chr_ota_data_val[2], gatt_svr_chr_ota_data_val[3],
+                 gatt_svr_chr_ota_data_val[4]);
 
-    // Example command to set motor speeds and direction for 10 seconds
-    MotorCommand command = {gatt_svr_chr_ota_data_val[0], gatt_svr_chr_ota_data_val[1],
-                            gatt_svr_chr_ota_data_val[2], gatt_svr_chr_ota_data_val[3],
-                            gatt_svr_chr_ota_data_val[4]};
-    set_motor_command(command);
+        // Example command to set motor speeds and direction for 10 seconds
+        MotorCommand command = {gatt_svr_chr_ota_data_val[0], gatt_svr_chr_ota_data_val[1],
+                                gatt_svr_chr_ota_data_val[2], gatt_svr_chr_ota_data_val[3],
+                                gatt_svr_chr_ota_data_val[4]};
+        set_motor_command(command);
 
-    num_pkgs_received++;
-    ESP_LOGI(LOG_TAG_GATT_SVR, "Received packet %d", num_pkgs_received);
+        num_pkgs_received++;
+        ESP_LOGI(LOG_TAG_GATT_SVR, "Received packet %d", num_pkgs_received);
 
-    return rc;
+        return rc;
 }
 
-void gatt_svr_init() {
-    ble_svc_gap_init();
-    ble_svc_gatt_init();
-    ble_gatts_count_cfg(gatt_svr_svcs);
-    ble_gatts_add_svcs(gatt_svr_svcs);
+static int gatt_svr_chr_ota_uart_tx_cb(uint16_t conn_handle,
+                                    uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg)
+{
+        return 0;
+}
+
+static int gatt_svr_chr_ota_uart_rx_cb(uint16_t conn_handle,
+                                    uint16_t attr_handle,
+                                    struct ble_gatt_access_ctxt *ctxt,
+                                    void *arg)
+{
+
+        char *command = (char *)ctxt->om->om_data;
+        ESP_LOGI(LOG_TAG_GATT_SVR, "Received command: %s", command);
+        // check if command is "CMD_INIT"
+        if (strncmp(command, "CMD_INIT", ctxt->om->om_len) == 0)
+        {
+                // notify ota_uart_val_handle with MSG_INIT_START:{# of readers},{antennaDelay},{newCardTimeout},{readCardTimeout},{haltA},{debug},{hardwareVersion},{softwareVersion},{macId},{antennaGain},{boardVersion}
+                // get esp bluetooth mac address
+                uint8_t mac[6];
+                esp_read_mac(mac, ESP_MAC_BT);
+
+                char response[128];
+                sprintf(response, "MSG_INIT_START:1,0,0,0,0,0,1.0,1.0,%s %02X%02X%02X%02X%02X%02X,0,1.0", model_num, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
+                ble_gattc_notify_custom(conn_handle, ota_uart_val_handle, om);
+                ESP_LOGI(LOG_TAG_GATT_SVR, "Sent response: %s", response);
+
+                sprintf(response, "MSG_INIT_OK:0");
+                om = ble_hs_mbuf_from_flat(response, strlen(response));
+                ble_gattc_notify_custom(conn_handle, ota_uart_val_handle, om);
+                ESP_LOGI(LOG_TAG_GATT_SVR, "Sent response: %s", response);
+
+                // notify MSG_INIT_COMPLETE
+                sprintf(response, "MSG_INIT_COMPLETE");
+                om = ble_hs_mbuf_from_flat(response, strlen(response));
+                ble_gattc_notify_custom(conn_handle, ota_uart_val_handle, om);
+                ESP_LOGI(LOG_TAG_GATT_SVR, "Sent response: %s", response);
+        }
+        // check CMD_SYNC
+        else if (strncmp(command, "CMD_SYNC", ctxt->om->om_len) == 0)
+        {
+                // notify ota_uart_val_handle with MSG_SYNC:{time}
+                long time = esp_timer_get_time();
+                char response[64];
+                sprintf(response, "MSG_SYNC:%ld", time);
+                struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
+                ble_gattc_notify_custom(conn_handle, ota_uart_val_handle, om);
+
+                ESP_LOGI(LOG_TAG_GATT_SVR, "Sent response: %s", response);
+        }
+
+        // log ctxt->om
+
+        return 0;
+}
+
+void gatt_svr_notify_time_to_mrc(){
+        long time = esp_timer_get_time();
+        char response[64];
+        uint8_t mac[6];
+        esp_read_mac(mac, ESP_MAC_BT);
+        // {reader #},{uid},{time}
+        sprintf(response, "0,%02X%02X%02X%02X%02X%02X,%ld", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], time);
+
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(response, strlen(response));
+        ble_gattc_notify_custom(0, ota_uart_val_handle, om);
+}
+
+void gatt_svr_init()
+{
+        ble_svc_gap_init();
+        ble_svc_gatt_init();
+        ble_gatts_count_cfg(gatt_svr_svcs);
+        ble_gatts_add_svcs(gatt_svr_svcs);
 }

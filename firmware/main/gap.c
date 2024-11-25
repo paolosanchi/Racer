@@ -56,6 +56,15 @@ void sync_cb(void) {
 
 int gap_event_handler(struct ble_gap_event *event, void *arg) {
   switch (event->type) {
+    case BLE_GAP_EVENT_CONN_UPDATE_REQ: 
+      struct ble_gap_upd_params params;
+      // Imposta i parametri di aggiornamento della connessione
+      params.itvl_min = BLE_GAP_INITIAL_CONN_ITVL_MIN;
+      params.itvl_max = BLE_GAP_INITIAL_CONN_ITVL_MAX;
+      params.latency = 0;
+      params.supervision_timeout = BLE_GAP_INITIAL_SUPERVISION_TIMEOUT;
+
+      break;  
     case BLE_GAP_EVENT_CONNECT:
       // A new connection was established or a connection attempt failed
       ESP_LOGI(LOG_TAG_GAP, "GAP: Connection %s: status=%d",
@@ -66,6 +75,7 @@ int gap_event_handler(struct ble_gap_event *event, void *arg) {
       set_led(3,true);
       set_led(2,true);
 
+      advertise();
       break;
 
     case BLE_GAP_EVENT_DISCONNECT:
